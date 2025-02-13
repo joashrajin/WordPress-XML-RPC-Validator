@@ -2,7 +2,7 @@
 <html <?php language_attributes(); ?>>
 <head>
 <meta http-equiv="Content-Type" content="<?php bloginfo( 'html_type' ); ?>; charset=<?php bloginfo( 'charset' ); ?>" />
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0">
 <title><?php echo wp_title(); ?></title>
 <?php
 $myStyleFile = constant( 'XMLRPC_VALIDATOR__PLUGIN_URL' ).'/xml-rpc-validator.css';

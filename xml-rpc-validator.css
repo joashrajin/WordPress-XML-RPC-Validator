@@ -55,7 +55,15 @@ acronym:hover, abbr:hover {
 /* @group Basics */
 
 body {
-	min-width: 40em; /* for the tabs, mostly */
+	min-width: unset;
+	width: 100%;
+	overflow-x: hidden;
+	height: 100%;
+	display: flex;
+	flex-direction: column;
+	min-height: 100vh;
+	margin: 0;
+	max-width: 100%;
 }
 
 p {
@@ -261,6 +269,9 @@ tr.subchoice th, tr.subchoice th label {
 /* @group Header */
 div#banner {
 	background-color: #365D95;
+	width: 100%;
+	padding: 0 10px;
+	box-sizing: border-box;
 }
 
 h1#title {
@@ -293,6 +304,8 @@ p#tagline {
 	line-height: 100% !important;
 	color: #D0DCEE;
 	background-color: transparent;
+	padding: 0.5em;
+	word-wrap: break-word;
 }
 
 /* @end */
@@ -730,15 +743,13 @@ div#don_program span#don_program_text a {font-weight: bold;}
 /* My things */
 
 #content {
-    background-color: #EAEBEE;
-    clear: both;
+    flex: 1;
+    min-height: 0;  /* Allow content to shrink */
 }
 
 #xmlrpc_validator_main {
-    background-color: #EAEBEE;
-    /*border-bottom: 1px solid #DCDDE0;*/
-    clear: both;
-    padding: 2em 1.5em 1em;
+    padding: 1em;
+    height: 100%;
 }
 
 #xmlrpc_validator_main legend, #xmlrpc_validator_main p, #xmlrpc_validator_main p strong, #xmlrpc_validator_main p a, #xmlrpc_validator_main fieldset, #xmlrpc_validator_main form, #xmlrpc_validator_main form fieldset legend a, #xmlrpc_validator_main form p label, #xmlrpc_validator_main tr label {
@@ -845,4 +856,246 @@ tr td {
 }
 tr.odd td {
 	background: #f2f7fc;
+}
+
+/* Footer styles */
+.site-footer {
+    margin-top: auto;  /* Push to bottom */
+    padding: 10px;
+    background-color: #EAEBEE;
+    border-top: 1px solid #eee;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.footer-content {
+    text-align: center;
+    max-width: 800px;
+    margin: 0 auto;
+    padding: 0 10px;
+}
+
+.footer-content p {
+    margin: 0;
+    padding: 5px 0;
+}
+
+/* Mobile adjustments */
+@media screen and (max-width: 768px) {
+    .site-footer {
+        padding: 8px 5px;
+    }
+}
+
+/* Remove any bottom margins from the last element in the main content */
+#xmlrpc_validator_main > *:last-child {
+    margin-bottom: 0;
+}
+
+/* Responsive adjustments */
+@media screen and (max-width: 768px) {
+    /* Fix input widths */
+    input#site_url, 
+    input#user_agent,
+    input#user_login,
+    input#user_pass,
+    input#HTTP_auth_user_login,
+    input#HTTP_auth_user_pass {
+        width: 100%;
+        box-sizing: border-box;
+        margin: 0.3em 0;
+    }
+
+    /* Fix form layout */
+    #xmlrpc_validator_main {
+        padding: 1em;
+    }
+
+    #xmlrpc_validator_main form {
+        width: 100%;
+        padding: 0;
+    }
+
+    #xmlrpc_validator_main form p {
+        width: 100%;
+        margin: 1em 0;
+        padding: 0;
+    }
+
+    /* Fix table overflow */
+    table {
+        width: 100%;
+        box-sizing: border-box;
+    }
+
+    /* Adjust header text */
+    h1#title {
+        font-size: 1.2em;
+        padding: 0.5em;
+        word-wrap: break-word;
+    }
+
+    #tagline {
+        padding: 0.5em;
+        word-wrap: break-word;
+    }
+
+    /* Fix select width */
+    select {
+        width: 100%;
+        max-width: 100%;
+        box-sizing: border-box;
+    }
+
+    /* Adjust header */
+    h1#title {
+        font-size: 1.2em;
+        padding: 0.5em;
+    }
+
+    /* Adjust footer */
+    .site-footer {
+        padding: 10px 5px;
+    }
+
+    .footer-content {
+        padding: 0 10px;
+    }
+}
+
+/* Very small screens */
+@media screen and (max-width: 480px) {
+    #xmlrpc_validator_main {
+        padding: 0.5em;
+    }
+
+    /* Make submit buttons full width */
+    input[type="submit"], 
+    button {
+        width: 100%;
+        box-sizing: border-box;
+        margin: 0.5em 0;
+    }
+
+    /* Adjust font sizes */
+    body {
+        font-size: 14px;
+    }
+
+    h2 {
+        font-size: 1.1em;
+    }
+
+    h3 {
+        font-size: 1em;
+    }
+}
+
+/* Fix horizontal scrolling issues */
+#xmlrpc_validator_log {
+    max-width: 100%;
+    overflow-x: auto;
+}
+
+/* Make images responsive */
+img {
+    max-width: 100%;
+    height: auto;
+}
+
+/* Base responsive fixes */
+html, body {
+    max-width: 100vw;
+    min-height: 100vh;
+    margin: 0;
+    padding: 0;
+    overflow-x: hidden;
+}
+
+body {
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+}
+
+#content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+}
+
+#xmlrpc_validator_main {
+    flex: 1;
+    padding: 1em;
+    margin: 0;
+    box-sizing: border-box;
+}
+
+/* Footer styles */
+.site-footer {
+    margin-top: auto;
+    padding: 10px;
+    background-color: #EAEBEE;
+    border-top: 1px solid #eee;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.footer-content {
+    text-align: center;
+    max-width: 800px;
+    margin: 0 auto;
+    padding: 0 10px;
+	display: flex;
+	justify-content: center;
+}
+
+.footer-content p {
+    margin: 0;
+    padding: 5px 0;
+}
+
+/* Mobile adjustments */
+@media screen and (max-width: 768px) {
+    #xmlrpc_validator_main {
+        padding: 10px 5px;
+        margin: 0;
+    }
+
+    /* Reduce spacing */
+    p.submit_button {
+        padding: 0.3em 0;
+        margin: 0;
+    }
+
+    div.options {
+        padding: 0.3em 0 0.3em 0.5em;
+    }
+
+    /* Minimize form spacing */
+    #xmlrpc_validator_main form p {
+        margin: 0.5em 0;
+    }
+
+    /* Adjust input margins */
+    input#site_url, 
+    input#uri, 
+    input#file, 
+    input#uploaded_file {
+        margin: 0.2em 0;
+    }
+
+    /* Compact footer */
+    .site-footer {
+        padding: 5px;
+    }
+
+    .footer-content {
+        padding: 0 5px;
+    }
+
+    .footer-content p {
+        margin: 0;
+        padding: 2px 0;
+    }
 }

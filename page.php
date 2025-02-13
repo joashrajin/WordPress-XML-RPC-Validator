@@ -121,7 +121,7 @@ elseif ( 'check_step1' == $action || ('home' == $action && $auto_check) ) : //2n
 				<?php echo $xml_rpc_validator_utils->printErrors($xmlrpcEndpointURL); 
 			} else {
 				$xmlrpcEndpointURL = esc_url($xmlrpcEndpointURL);
-				?><p class="tick"style="margin-bottom:10px;"><b>Congratulation! Your site passed the first check.</b>
+				?><p class="tick"style="margin-bottom:10px;"><b>Congratulations! Your site passed the first check.</b>
 				<br /><br />You can add the blog within the mobile app using the following URL: <em><?php echo ($xmlrpcEndpointURL); ?></em>
 				</p>
 				<form name="credentialInfoform" id="credentialInfoform" action="#" method="post">
@@ -243,3 +243,5 @@ elseif ( 'check_step2' == $action ) : //3rd page
 endif; ?>
 </div> 
 <?php include( dirname(__FILE__) . '/footer.php' );  ?>
+</body>
+</html>

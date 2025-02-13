@@ -7,13 +7,13 @@
 	<?php echo $xml_rpc_validator_utils->show_log_on_video( ); ?>
 	</div>
 	
-	<footer>
-		<?php if ( 'home' == $action ) : ?>
+	<footer class="site-footer">
+		<div class="footer-content">
 			<p>
-				Source code available <a href="https://github.com/daniloercoli/WordPress-XML-RPC-Validator">here</a>.
+				Powered by <a href="https://wordpress.com" target="_blank" rel="noopener">WordPress.com</a> | 
+				Maintained by <a href="https://joash.blog" target="_blank" rel="noopener">Joash</a>
 			</p>
-
-		<?php endif; ?>
+		</div>
 		<?php wp_footer(); ?>
 	</footer>
 </body>

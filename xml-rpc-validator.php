@@ -2,9 +2,9 @@
 
 /*
 Plugin Name: XML-RPC Validator
-Version: 0.1
+Version: 0.2
 Description: 
-Author: Danilo E
+Author: Danilo E and Joash Rajin
 Author URI: 
 Plugin URI:
 */
