@@ -100,3 +100,4 @@ function xml_rpc_validator_create_main_page()
 }
 
 ?>
+

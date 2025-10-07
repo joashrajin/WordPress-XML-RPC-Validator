@@ -30,7 +30,7 @@ remove_action( 'wp_head', 'feed_links_extra', 3 );
 remove_action( 'wp_head', 'feed_links', 2 );
 remove_action( 'wp_head', 'rsd_link' );
 
-//Remove link rel=’prev’ and link rel=’next’ from Head
+//Remove link rel='prev' and link rel='next' from Head
 remove_action( 'wp_head', 'adjacent_posts_rel_link_wp_head', 10, 0 );
 
 
@@ -55,7 +55,9 @@ class xml_rpc_validator_utils {
 	var $xml_rpc_server_errors = array(
 		'401'	=>  '<a href="https://apps.wordpress.com/support/">Link to Mobile Apps Support Page.</a>',
 		'405'	=>  '<a href="https://apps.wordpress.com/support/">Link to Mobile Apps Support Page.</a>',
-		'412'	=>  '<a href="https://apps.wordpress.com/support/">Link to Mobile Apps Support Page.</a>'
+		'412'	=>  '<a href="https://apps.wordpress.com/support/">Link to Mobile Apps Support Page.</a>',
+		'invalid_content_type'	=>  'The server is not returning proper XML-RPC content. This usually means XML-RPC access is blocked by a security plugin, .htaccess rules, or server configuration.',
+		'blocked_xmlrpc'	=>  'The XML-RPC endpoint is being redirected or blocked. Check your security plugins (e.g., Wordfence, iThemes Security) or contact your hosting provider.'
 	);
 
 	function __construct() {
@@ -481,7 +483,8 @@ class Blog_Validator {
 	private function find_rsd_document_url() {
 		global $xml_rpc_validator_errors;
 		$rsdURL;
-		xml_rpc_validator_logIO("O", "The validator is going to downloading the HTML page available at the URL " .$this->site_URL.' Inside the HTML code should be available the link to the RSD document.' );
+		xml_rpc_validator_logIO("O", "The validator is downloading the HTML page from " .$this->site_URL);
+		xml_rpc_validator_logIO("O", "NOTE: WordPress sites normally include an RSD (Really Simple Discovery) link in their HTML <head> section, even if XML-RPC is later blocked by security plugins.");
 		//download the HTML code
 		$headers = array( 'Accept' => 'text/html');
 		$response = $this->downloadContent($this->site_URL, $headers);
@@ -489,6 +492,7 @@ class Blog_Validator {
 			return $response;
 		} else {
 			xml_rpc_validator_logIO("O", "Parsing the HTML response document trying to match the RSD Endpoint declaration...");
+			xml_rpc_validator_logIO("O", "Looking for: <link rel=\"EditURI\" type=\"application/rsd+xml\" title=\"RSD\" href=\"...\"> in HTML <head>");
 			//find the RSD endpoint URL
 			$match = array();
 			$dom = new DOMDocument();
@@ -503,24 +507,34 @@ class Blog_Validator {
 
 		if(!isset($rsdURL)){
 			$error_obj = $xml_rpc_validator_errors['NO_RSD_FOUND'];
-			xml_rpc_validator_logIO("O", "RSD document NOT found!!");
+			xml_rpc_validator_logIO("O", "RSD document link NOT found in HTML! The site may have security plugins that remove RSD references.");
 			return new WP_Error( $error_obj['code'], $error_obj['message'] );
 		}
 
-		xml_rpc_validator_logIO("O", "RSD document found at:". print_r ($rsdURL, TRUE));
+		xml_rpc_validator_logIO("O", "RSD link found in HTML (this is normal for WordPress): ". print_r ($rsdURL, TRUE));
+		xml_rpc_validator_logIO("O", "IMPORTANT: Finding the RSD link doesn't mean XML-RPC is actually accessible - we'll verify next...");
 
 		return $rsdURL;
 	}
 
 	private function findXMLRPCEndpointFromRSDlink($rsdURL) {
 		global $xml_rpc_validator_errors;
-		xml_rpc_validator_logIO("O", "The RSD document was found at the following URL ".$rsdURL." Downloading the RSD document content. Inside the RSD document there is the link to the XML-RPC endpoint.");
+		xml_rpc_validator_logIO("O", "Attempting to download RSD document from: ".$rsdURL);
+		xml_rpc_validator_logIO("O", "The RSD document should contain the actual XML-RPC endpoint URL.");
 		$xmlrpcURL;
 		$headers = array( 'Accept' => 'text/xml');
 		$response = $this->downloadContent($rsdURL, $headers);
 		if( is_wp_error( $response ) ) {
+			xml_rpc_validator_logIO("O", "Failed to retrieve RSD document - endpoint may be blocked");
 			return $response;
 		} else {
+			// Check content type
+			$content_type = isset($response['headers']['content-type']) ? $response['headers']['content-type'] : '';
+			if ( stripos($content_type, 'text/xml') === false && stripos($content_type, 'application/xml') === false && stripos($content_type, 'application/rsd+xml') === false ) {
+				xml_rpc_validator_logIO("O", "WARNING: RSD endpoint returned non-XML content type: " . $content_type);
+				$error_obj = $xml_rpc_validator_errors['MALFORMED_RSD'];
+				return new WP_Error( $error_obj['code'], 'RSD endpoint is blocked or redirected. Expected XML but got: ' . $content_type );
+			}
 
 			if(empty($response['body'])){
 				$error_obj = $xml_rpc_validator_errors['EMPTY_RSD'];
@@ -529,12 +543,13 @@ class Blog_Validator {
 				//check the first character
 				if($response['body'][0] !== '<') {
 					$error_obj = $xml_rpc_validator_errors['MALFORMED_RSD'];
+					xml_rpc_validator_logIO("O", "RSD response doesn't start with '<' - likely blocked or redirected");
 					return new WP_Error( $error_obj['code'], $error_obj['message'] );
 				}
 			}
 
 			//find the XMLRPC endpoint URL
-			xml_rpc_validator_logIO("O", "Parsing the RSD document...");
+			xml_rpc_validator_logIO("O", "Parsing the RSD XML document for WordPress API endpoint...");
 			$match = array();
 			$dom = new DOMDocument();
 			@$dom->loadXML($response['body']);
@@ -549,10 +564,11 @@ class Blog_Validator {
 
 		if(!isset($xmlrpcURL)){
 			$error_obj = $xml_rpc_validator_errors['NO_XMLRPC_IN_RSD_FOUND'];
-			xml_rpc_validator_logIO("O", "NO  XML-RPC endpoint found!!");
+			xml_rpc_validator_logIO("O", "No XML-RPC endpoint found in RSD document");
 			return new WP_Error( $error_obj['code'], $error_obj['message'] );
 		}
-		xml_rpc_validator_logIO("O", "Found the XML-RPC endpoint at:". print_r ($xmlrpcURL, TRUE));
+		xml_rpc_validator_logIO("O", "XML-RPC endpoint URL found in RSD: ". print_r ($xmlrpcURL, TRUE));
+		xml_rpc_validator_logIO("O", "Next step: Verifying if this endpoint is actually accessible...");
 		return $xmlrpcURL;
 	}
 
@@ -610,6 +626,11 @@ class Blog_Validator {
 		
 		xml_rpc_validator_logIO("O", "HTTP Response Headers: " .print_r ($response['headers'], TRUE));
 		xml_rpc_validator_logIO("O", "HTTP Response Codes: " .print_r ($response['response'], TRUE));
+		
+		// Check for redirect headers even with 200 status
+		if ( isset($response['headers']['refresh']) || isset($response['headers']['location']) ) {
+			xml_rpc_validator_logIO("O", "WARNING: Server returned redirect headers - content may not be authentic");
+		}
 		
 		if ( strcmp( $response['response']['code'], '200' ) != 0 ) {
 			return  new WP_Error($response['response']['code'], $response['response']['message']);
@@ -794,8 +815,22 @@ class wp_xmlrpc_client  {
 		xml_rpc_validator_logIO("O", "HTTP Response code: ". print_r ($this->response['response']['code']. ' - '. $this->response['response']['message'], TRUE));
 		xml_rpc_validator_logIO("O", "HTTP Response headers: ". print_r ( $this->response['headers'], TRUE));
 
+		// Check if response code is 200
 		if ( strcmp($this->response['response']['code'], '200') != 0 ) {
 			return new WP_Error($this->response['response']['code'], $this->response['response']['message']);
+		}
+		
+		// Validate Content-Type for XML-RPC responses
+		$content_type = isset($this->response['headers']['content-type']) ? $this->response['headers']['content-type'] : '';
+		if ( stripos($content_type, 'text/xml') === false && stripos($content_type, 'application/xml') === false ) {
+			xml_rpc_validator_logIO("O", "WARNING: Expected XML content but received Content-Type: " . $content_type);
+			return new WP_Error('invalid_content_type', 'Server did not return XML content. Received: ' . $content_type . '. The XML-RPC endpoint may be blocked or redirected.');
+		}
+		
+		// Check for redirect headers even with 200 status
+		if ( isset($this->response['headers']['refresh']) || isset($this->response['headers']['location']) ) {
+			xml_rpc_validator_logIO("O", "WARNING: Server returned redirect headers with 200 status - endpoint is likely blocked");
+			return new WP_Error('blocked_xmlrpc', 'XML-RPC endpoint appears to be blocked or redirected by server security.');
 		}
 
 		xml_rpc_validator_logIO("O", "HTTP Response Body:", TRUE);
@@ -867,3 +902,4 @@ class wp_xmlrpc_client  {
 	}
 }
 ?>
+

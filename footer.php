@@ -10,7 +10,7 @@
 	<footer class="site-footer">
 		<div class="footer-content">
 			<p>
-				Powered by <a href="https://wordpress.com" target="_blank" rel="noopener">WordPress.com</a> | 
+				Third-party validation tool | Built with WordPress | 
 				Maintained by <a href="https://joash.blog" target="_blank" rel="noopener">Joash</a>
 			</p>
 		</div>
@@ -18,3 +18,4 @@
 	</footer>
 </body>
 </html>
+

@@ -58,3 +58,4 @@ if( is_wp_error( $result ) ) {
 	echo json_encode( array("ok", $xml_rpc_validator_utils->logging_buffer ) );
 }
 ?>
+

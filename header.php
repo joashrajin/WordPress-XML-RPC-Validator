@@ -33,6 +33,7 @@ wp_head();
 		<h1 id="title">
 			<a href="<?php echo get_permalink( get_the_ID() ); ?>"><span>WordPress XML-RPC Validation Service</span> </a>
 		</h1>
-		<p id="tagline">Check the XML-RPC Endpoint of your site</p>
+		<p id="tagline">Check the XML-RPC Endpoint of your site | Third-party validation tool</p>
 	</div>
 	<div id="content">
+
