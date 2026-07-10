@@ -121,6 +121,54 @@ function xml_rpc_validator_is_safe_url( $url ) {
 	return true;
 }
 
+/**
+ * Resolve a (possibly relative) redirect Location against a base URL.
+ *
+ * Prefers WordPress core's WP_Http::make_absolute_url() when available, but
+ * falls back to a self-contained resolver so relative redirects are handled
+ * even on WordPress installs (3.0-3.3) that predate that helper -- otherwise a
+ * relative Location would stay relative and be rejected by the safe-URL check.
+ *
+ * @param string $maybe_relative The Location header value.
+ * @param string $base_url       The URL the redirect was received from.
+ * @return string An absolute URL (or the input unchanged if it can't be resolved).
+ */
+function xml_rpc_validator_make_absolute_url( $maybe_relative, $base_url ) {
+	$maybe_relative = trim( (string) $maybe_relative );
+
+	if ( method_exists( 'WP_Http', 'make_absolute_url' ) ) {
+		return WP_Http::make_absolute_url( $maybe_relative, $base_url );
+	}
+
+	if ( '' === $maybe_relative ) {
+		return $base_url;
+	}
+	// Already absolute (has a scheme).
+	if ( preg_match( '#^[a-z][a-z0-9+.\-]*://#i', $maybe_relative ) ) {
+		return $maybe_relative;
+	}
+
+	$base = wp_parse_url( $base_url );
+	if ( empty( $base['scheme'] ) || empty( $base['host'] ) ) {
+		return $maybe_relative; // can't resolve; the caller's safe-url check will reject it
+	}
+	$authority = $base['scheme'] . '://' . $base['host'] . ( isset( $base['port'] ) ? ':' . $base['port'] : '' );
+
+	// Scheme-relative: //host/path
+	if ( 0 === strpos( $maybe_relative, '//' ) ) {
+		return $base['scheme'] . ':' . $maybe_relative;
+	}
+	// Root-relative: /path
+	if ( 0 === strpos( $maybe_relative, '/' ) ) {
+		return $authority . $maybe_relative;
+	}
+	// Relative path: resolve against the base path's directory.
+	$base_path = isset( $base['path'] ) ? $base['path'] : '/';
+	$slash     = strrpos( $base_path, '/' );
+	$dir       = ( false === $slash ) ? '/' : substr( $base_path, 0, $slash + 1 );
+	return $authority . $dir . $maybe_relative;
+}
+
 //creates the instances of common classes used later
 $ua_info = new UserAgentInfo();
 $xml_rpc_validator_utils = new xml_rpc_validator_utils();
@@ -737,9 +785,7 @@ class Blog_Validator {
 			$location = isset( $response['headers']['location'] ) ? $response['headers']['location'] : '';
 			if ( $code >= 300 && $code < 400 && '' !== $location && $hop < $max_hops ) {
 				// Resolve a possibly-relative Location against the current URL, then re-check it.
-				if ( method_exists( 'WP_Http', 'make_absolute_url' ) ) {
-					$location = WP_Http::make_absolute_url( $location, $current_url );
-				}
+				$location = xml_rpc_validator_make_absolute_url( $location, $current_url );
 				$safe = xml_rpc_validator_is_safe_url( $location );
 				if ( is_wp_error( $safe ) ) {
 					xml_rpc_validator_logIO("O", "Refusing to follow a redirect to a disallowed URL: ".$location);

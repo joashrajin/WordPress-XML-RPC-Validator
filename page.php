@@ -17,6 +17,8 @@ if ( 'home' == $action && !$auto_check ) :
 	else
 		$nonce_content = '';
 				
+	// esc_url() is the correct escaper for a URL in an HTML attribute (it encodes quotes);
+	// wrapping it in esc_attr() would double-encode '&' and break query-string URLs.
 	$site_url =  isset( $_REQUEST['site_url'] ) ? esc_url( $_REQUEST['site_url'] ) : 'http://';
 ?>
 	<form name="loginform" id="loginform" action="#" method="post" onSubmit="return xml_rpc_validator.check_url();">
