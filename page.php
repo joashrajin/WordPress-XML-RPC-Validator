@@ -21,15 +21,15 @@ if ( 'home' == $action && !$auto_check ) :
 ?>
 	<form name="loginform" id="loginform" action="#" method="post" onSubmit="return xml_rpc_validator.check_url();">
 		<?php echo $nonce_content; ?>
+		<p class="intro">Enter the address of a WordPress site to check that its XML-RPC endpoint is reachable and working.</p>
 		<div class="tipcontainer"><span class="errortipwrap"><span class="errortiptext">Please Try Again</span></span></div>
 		<span id="url-loading" class="loading" style="display: none;"></span>
 		<p>
-			<label for="site_url" title="Address of site to Validate">Address:</label>
-			<input type='text' name='site_url' id='site_url' class='input' value='<?php echo $site_url; ?>' size='30' tabindex='10'/>		
+			<label for="site_url" title="Address of site to Validate">Address</label>
+			<input type='text' name='site_url' id='site_url' class='input' value='<?php echo $site_url; ?>' size='30' tabindex='10' placeholder='https://example.com' autocomplete='url' autocapitalize='none' spellcheck='false'/>
 		</p>
-		<br/>
-		<!-- a href="" id="xmlrpc_validator_advanced_settings_switcher" onclick="xml_rpc_validator.toggle_advanced_settings( ); return false;">More Options</a -->
-		<fieldset id="xmlrpc_validator_advanced_settings" style="margin-top:10px;">
+		<a href="#" id="xmlrpc_validator_advanced_settings_switcher" onclick="xml_rpc_validator.toggle_advanced_settings( ); return false;">More Options</a>
+		<fieldset id="xmlrpc_validator_advanced_settings" style="display:none;">
 			<p>
 			<label for="user_agent_selection"><?php _e('User Agent'); ?></label>
 				<select id="user_agent_selection">
@@ -77,7 +77,8 @@ if ( 'home' == $action && !$auto_check ) :
 elseif ( 'check_step1' == $action || ('home' == $action && $auto_check) ) : //2nd page
 		$permalink = get_permalink( get_the_ID() );
 		$pre_check_error_message = null;
-		if (!$auto_check && !wp_verify_nonce($_REQUEST['name_of_nonce_field_checkstep1'], 'checkstep1') ) {
+		$nonce_field_checkstep1 = isset( $_REQUEST['name_of_nonce_field_checkstep1'] ) ? $_REQUEST['name_of_nonce_field_checkstep1'] : '';
+		if (!$auto_check && !wp_verify_nonce($nonce_field_checkstep1, 'checkstep1') ) {
 			$pre_check_error_message = "Sorry, your nonce did not verify.";
 		} else {
 			//check the URL here
@@ -102,15 +103,15 @@ elseif ( 'check_step1' == $action || ('home' == $action && $auto_check) ) : //2n
 		else :
 			$client = new Blog_Validator( esc_url_raw( $_REQUEST['site_url'] ) );
 			$site_url = esc_url($unescaped_site_url);
-			//Set the UserAgent
-			$user_agent_selected = isset( $_REQUEST['user_agent'] ) ? esc_attr( $_REQUEST['user_agent'] ) : esc_attr( "WordPress XML-RPC Client" );
+			//Set the UserAgent (kept raw so the exact UA is sent; escaped only at HTML output)
+			$user_agent_selected = isset( $_REQUEST['user_agent'] ) ? $_REQUEST['user_agent'] : "WordPress XML-RPC Client";
 			$client -> setUserAgent($user_agent_selected);
 			//Enable the HTTP Auth if selected
 			$enable_401_auth= ! empty( $_REQUEST['enable_401_auth'] );
+			$HTTP_auth_user_login = isset( $_REQUEST['HTTP_auth_user_login'] ) ? stripslashes( $_REQUEST['HTTP_auth_user_login'] ) : '';
+			$HTTP_auth_user_pass  = isset( $_REQUEST['HTTP_auth_user_pass'] )  ? stripslashes( $_REQUEST['HTTP_auth_user_pass'] )  : '';
 			if($enable_401_auth) {
 				xml_rpc_validator_logIO("O", "HTTP auth enabled");
-				$HTTP_auth_user_login = stripslashes( $_REQUEST['HTTP_auth_user_login'] );
-				$HTTP_auth_user_pass = stripslashes( $_REQUEST['HTTP_auth_user_pass'] );
 				$client -> setHTTPCredential( $HTTP_auth_user_login, $HTTP_auth_user_pass );
 			}
 			
@@ -142,12 +143,12 @@ elseif ( 'check_step1' == $action || ('home' == $action && $auto_check) ) : //2n
 					<input type="hidden" name="site_url" value="<?php echo $site_url; ?>"/>
 					<input type="hidden" name="xmlrpc_url" value="<?php echo ($xmlrpcEndpointURL); ?>"/>
 					<input type="hidden" name="action" value="check_step2"/>
-					<input type="hidden" name="user_agent" value="<?php echo ($user_agent_selected); ?>"/>
-		
+					<input type="hidden" name="user_agent" value="<?php echo esc_attr($user_agent_selected); ?>"/>
+
 				<?php if ( $enable_401_auth ) { ?>
 					<input type="hidden" name="enable_401_auth" value="yes" />
-					<input type="hidden" name="HTTP_auth_user_login" value="<?php esc_attr_e($_REQUEST['HTTP_auth_user_login']); ?>" />
-					<input type="hidden" name="HTTP_auth_user_pass" value="<?php esc_attr_e($_REQUEST['HTTP_auth_user_pass']); ?>" />
+					<input type="hidden" name="HTTP_auth_user_login" value="<?php echo esc_attr($HTTP_auth_user_login); ?>" />
+					<input type="hidden" name="HTTP_auth_user_pass" value="<?php echo esc_attr($HTTP_auth_user_pass); ?>" />
 				<?php } ?>
 				</form>
 			<?php } ?>
@@ -156,23 +157,29 @@ elseif ( 'check_step1' == $action || ('home' == $action && $auto_check) ) : //2n
 elseif ( 'check_step2' == $action ) : //3rd page 
 	$permalink = get_permalink( get_the_ID() );
 	
-	if ( !wp_verify_nonce($_REQUEST['name_of_nonce_field_checkstep2'], 'checkstep2') ) :
+	$nonce_field_checkstep2 = isset( $_REQUEST['name_of_nonce_field_checkstep2'] ) ? $_REQUEST['name_of_nonce_field_checkstep2'] : '';
+	if ( !wp_verify_nonce($nonce_field_checkstep2, 'checkstep2') ) :
 		echo ('Sorry, your nonce did not verify.');
 	else :	
 		$site_url = isset($_REQUEST['site_url']) ? $_REQUEST['site_url'] : '';
 		$xmlrpc_url = isset($_REQUEST['xmlrpc_url']) ? $_REQUEST['xmlrpc_url'] : '';
 	
+		$req_user_login = isset( $_REQUEST['user_login'] ) ? $_REQUEST['user_login'] : '';
+		$req_user_pass  = isset( $_REQUEST['user_pass'] )  ? $_REQUEST['user_pass']  : '';
+
 		$client = new Blog_Validator( esc_url_raw ( $site_url ) );
 		$client->xmlrpc_endpoint_URL = esc_url_raw ( $xmlrpc_url );
-		$client->setWPCredential( $_REQUEST['user_login'], $_REQUEST['user_pass'] );
-		//Set the UserAgent
-		$user_agent_selected = esc_attr( $_REQUEST['user_agent'] );
+		$client->setWPCredential( $req_user_login, $req_user_pass );
+		//Set the UserAgent (kept raw so the exact UA is sent; escaped only at HTML output)
+		$user_agent_selected = isset( $_REQUEST['user_agent'] ) ? $_REQUEST['user_agent'] : '';
 		$client -> setUserAgent($user_agent_selected);
 		//Enable HTTP Auth if selected
 		$enable_401_auth = ! empty( $_REQUEST['enable_401_auth'] );
+		$req_http_login = isset( $_REQUEST['HTTP_auth_user_login'] ) ? $_REQUEST['HTTP_auth_user_login'] : '';
+		$req_http_pass  = isset( $_REQUEST['HTTP_auth_user_pass'] )  ? $_REQUEST['HTTP_auth_user_pass']  : '';
 		if($enable_401_auth) {
 			xml_rpc_validator_logIO("O", "HTTP auth enabled");
-			$client -> setHTTPCredential( $_REQUEST['HTTP_auth_user_login'], $_REQUEST['HTTP_auth_user_pass'] );
+			$client -> setHTTPCredential( $req_http_login, $req_http_pass );
 		}
 	
 		$basicCallsRes = $client->getUsersBlogs();
@@ -185,19 +192,22 @@ elseif ( 'check_step2' == $action ) : //3rd page
 				<form name="xml_rpc_single_site_form" id="xml_rpc_single_site_form" action="#" method="post" onsubmit="return false;">
 				<p>Please select the blog you wanna test:</p>	
 				<?php foreach ($client->userBlogs as $blog) {
-					echo '<p style="margin-top:10px"><input type="radio" name="single_site_xmlrpc_url" value="'.$blog['xmlrpc'].'"> '.$blog['blogName'].' - '.$blog['xmlrpc'].'</input></p>';
+					// $blog values come from the remote XML-RPC server: escape before rendering.
+					$blog_xmlrpc = isset( $blog['xmlrpc'] ) ? $blog['xmlrpc'] : '';
+					$blog_name   = isset( $blog['blogName'] ) ? $blog['blogName'] : '';
+					echo '<p style="margin-top:10px"><label><input type="radio" name="single_site_xmlrpc_url" value="'.esc_attr( $blog_xmlrpc ).'"> '.esc_html( $blog_name ).' - '.esc_html( $blog_xmlrpc ).'</label></p>';
 				}//end foreach
 				?>
-				<input type="hidden" name="user_login" id="user_login" value="<?php esc_attr_e($_REQUEST['user_login']); ?>"/>
-				<input type="hidden" name="user_pass" id="user_pass" value="<?php esc_attr_e($_REQUEST['user_pass']); ?>"/>
+				<input type="hidden" name="user_login" id="user_login" value="<?php echo esc_attr($req_user_login); ?>"/>
+				<input type="hidden" name="user_pass" id="user_pass" value="<?php echo esc_attr($req_user_pass); ?>"/>
 				<input type="hidden" name="site_url" value="<?php echo esc_url( $site_url ); ?>"/>
 				<input type="hidden" name="xmlrpc_url" value="<?php echo esc_url($xmlrpc_url); ?>"/>
-				<input type="hidden" name="user_agent" id="user_agent" value="<?php echo ($user_agent_selected); ?>"/>
+				<input type="hidden" name="user_agent" id="user_agent" value="<?php echo esc_attr($user_agent_selected); ?>"/>
 				
 				<?php if ($enable_401_auth){ ?>
 					<input type="hidden" id="enable_401_auth" name="enable_401_auth" value="yes" />
-					<input type="hidden" id="HTTP_auth_user_login" name="HTTP_auth_user_login" value="<?php esc_attr_e($_REQUEST['HTTP_auth_user_login']); ?>" />
-					<input type="hidden" id="HTTP_auth_user_pass" name="HTTP_auth_user_pass" value="<?php esc_attr_e($_REQUEST['HTTP_auth_user_pass']) ?>" />
+					<input type="hidden" id="HTTP_auth_user_login" name="HTTP_auth_user_login" value="<?php echo esc_attr($req_http_login); ?>" />
+					<input type="hidden" id="HTTP_auth_user_pass" name="HTTP_auth_user_pass" value="<?php echo esc_attr($req_http_pass); ?>" />
 				<?php } ?>
 				<p class="submit_button">
 				<input type="submit" name="xml_rpc_single_site_form-submit" id="xml_rpc_single_site_form-submit" class="button-primary" value="<?php esc_attr_e('Check') ?>" tabindex="1000"/>

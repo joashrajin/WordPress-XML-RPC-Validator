@@ -15,24 +15,27 @@ $xmlrpc_url = esc_url($xmlrpc_url);
 $client = new Blog_Validator($site_url);
 $client->xmlrpc_endpoint_URL = $xmlrpc_url;
 	
-$user_login = strip_tags(stripslashes($_POST['user_login']));
-$user_pass = strip_tags(stripslashes($_POST['user_pass']));
+$user_login = isset($_POST['user_login']) ? strip_tags(stripslashes($_POST['user_login'])) : '';
+$user_pass  = isset($_POST['user_pass'])  ? stripslashes($_POST['user_pass'])            : '';
 $client->setWPCredential($user_login, $user_pass);
 
-//Set the UserAgent
-$user_agent_selected = esc_attr( $_REQUEST['user_agent'] );
+//Set the UserAgent (raw: it is sent as an HTTP header and only reaches the log, which is escaped)
+$user_agent_selected = isset($_POST['user_agent']) ? $_POST['user_agent'] : '';
 $client -> setUserAgent( $user_agent_selected );
 
 $enable_401_auth = ! empty( $_POST['enable_401_auth'] );
 if($enable_401_auth) {
 	xml_rpc_validator_logIO("O", "HTTP auth enabled");
-	$HTTP_auth_user_login = strip_tags(stripslashes($_POST['HTTP_auth_user_login']));
-	$HTTP_auth_user_pass = strip_tags(stripslashes($_POST['HTTP_auth_user_pass']));
+	$HTTP_auth_user_login = isset($_POST['HTTP_auth_user_login']) ? strip_tags(stripslashes($_POST['HTTP_auth_user_login'])) : '';
+	$HTTP_auth_user_pass  = isset($_POST['HTTP_auth_user_pass'])  ? stripslashes($_POST['HTTP_auth_user_pass'])            : '';
 	$client -> setHTTPCredential($HTTP_auth_user_login, $HTTP_auth_user_pass);
 }
 
 $method_name = isset($_POST['method_name']) ? $_POST['method_name'] : '';
-if ( empty( $method_name ) ) echo json_encode( array("error", 'Internal Error, please try later.' ) );
+if ( empty( $method_name ) ) {
+	echo json_encode( array("error", 'Internal Error, please try later.', '' ) );
+	exit; // stop here so we don't fall through and emit a second JSON blob
+}
 
 if( 'check_wp_version' == $method_name) {
 	//do not check the WP version on WP.COM
