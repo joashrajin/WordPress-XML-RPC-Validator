@@ -3,10 +3,10 @@
 /*
 Plugin Name: XML-RPC Validator
 Version: 0.2
-Description: 
+Description: Checks the validity of the XML-RPC endpoint of a WordPress site, including detection of blocked/redirected endpoints. Hardened against SSRF/XSS/credential exposure with a modern, responsive UI.
 Author: Danilo E and Joash Rajin
-Author URI: 
-Plugin URI:
+Author URI:
+Plugin URI: https://github.com/joashrajin/WordPress-XML-RPC-Validator
 */
 
 global $wp_version;

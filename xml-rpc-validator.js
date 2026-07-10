@@ -106,8 +106,8 @@ var xml_rpc_validator = {
 			jq('.cross').removeClass('cross').addClass('wait');
 			jq('.xml_rpc_error').hide().text('');
 			
-			//clean the log div
-			jq('#xmlrpc_validator_log').text('');
+			//reset the log as a real table so the appended <tr> rows render correctly
+			jq('#xmlrpc_validator_log').html('<table><thead><tr><th>Date</th><th>Message</th></tr></thead><tbody></tbody></table>');
 			 
 			if ( typeof xml_rpc_validator.request == 'object' )
 				xml_rpc_validator.request.abort();
@@ -131,7 +131,7 @@ var xml_rpc_validator = {
 			xml_rpc_validator.request = jq.ajax({
 				    type: "POST",
 				    url: XML_RPC_Setting.plugin_url,
-				    timeout: 30000,				    
+				    timeout: 30000,
 				    data: {
 				    	xmlrpc_url: url,
 				        method_name : call_obj['xmlrpc_call'],
@@ -145,38 +145,44 @@ var xml_rpc_validator = {
 						HTTP_auth_user_pass: jq( '#HTTP_auth_user_pass').val()
 				    },
 				    success: function(msg) {
-				    	var obj = jQuery.parseJSON(msg);
-				    	$old_log = jq('#xmlrpc_validator_log').html();
 				    	var call_obj = arrayAssoc[xml_rpc_validator.current_call_index];
-				    	$current_log_msg = '';
-				    	
+				    	var currentLogMsg = '';
+				    	var obj;
+
+				    	try {
+				    		obj = ( typeof msg === 'string' ) ? JSON.parse( msg ) : msg;
+				    	} catch ( e ) {
+				    		obj = [ 'error', 'The server returned an unexpected (non-JSON) response.', '' ];
+				    	}
+
 				    	if( 'ok' == obj[0] ) {
 							jq('#'+call_obj['div_id']).removeClass('running').addClass('tick');
-							$current_log_msg = obj[1];
+							currentLogMsg = obj[1] || '';
 				        } else {
 							jq('#'+call_obj['div_id']).removeClass('running').addClass('cross');
-							jq('#xml_rpc_error_'+call_obj['div_id']).html(obj[1]).show();
-							$current_log_msg = obj[2];
+							jq('#xml_rpc_error_'+call_obj['div_id']).html(obj[1] || '').show();
+							currentLogMsg = obj[2] || '';
 				        }
-				    	
-				    	jq('#xmlrpc_validator_log').html( $old_log + $current_log_msg ); //writes the full log
+
+				    	// append the server log rows into the table body (valid HTML, renders correctly)
+				    	jq('#xmlrpc_validator_log tbody').append( currentLogMsg );
 				        xml_rpc_validator.current_call_index++;
 				        xml_rpc_validator.make_ajax_call( );
 				    },
-				    error: function(msg) {
-				    	//console.log('Error: ' + msg.responseText);
+				    error: function(jqXHR, textStatus) {
 				    	var call_obj = arrayAssoc[xml_rpc_validator.current_call_index];
 						jq('#'+call_obj['div_id']).removeClass('running').addClass('cross');
-						
-						jq('#xml_rpc_error_'+call_obj['div_id']).html(msg).show();
 
-						$old_log = jq('#xmlrpc_validator_log').html();
-						jq('#xmlrpc_validator_log').html( $old_log + $current_log_msg ); //writes the full log
-						
+						var reason = textStatus === 'timeout'
+							? 'The request timed out.'
+							: 'The request could not be completed (' + ( textStatus || 'error' ) + ').';
+						jq('#xml_rpc_error_'+call_obj['div_id']).text(reason).show();
+
+						// No server-side log is available on a transport error; leave the log as-is.
 						xml_rpc_validator.current_call_index++;
 						xml_rpc_validator.make_ajax_call( );
 				    }
-				});		
+				});
 			},
 }
 
@@ -197,4 +203,4 @@ jQuery(document).ready(function($) {
 });
 </script>
 */
-
+		

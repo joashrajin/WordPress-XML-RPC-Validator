@@ -36,6 +36,138 @@ remove_action( 'wp_head', 'adjacent_posts_rel_link_wp_head', 10, 0 );
 
 define("USER_AGENT", 'WordPress XML-RPC Client');
 define("REQUEST_HTTP_TIMEOUT", 30); //30 secs timeout for HTTP request
+define("REQUEST_MAX_RESPONSE_BYTES", 2 * 1024 * 1024); //2 MB cap on any downloaded/response body (SSRF/DoS hardening)
+
+/**
+ * Validate an outbound URL before the server fetches it.
+ *
+ * This is the single choke-point guard for every server-side request the
+ * validator makes -- the initial site fetch, the guessed xmlrpc.php probe,
+ * and (critically) the second-hop RSD / apiLink URLs that come from remote,
+ * attacker-influenced content. It blocks non-HTTP(S) schemes and any host
+ * that resolves to a loopback, private, link-local or otherwise reserved IP
+ * range, including the cloud metadata address 169.254.169.254.
+ *
+ * Note: this pre-check plus the 'reject_unsafe_urls' request arg (which makes
+ * WordPress re-validate at connect time) is defence in depth. A small
+ * DNS-rebinding TOCTOU window remains between this resolution and the actual
+ * socket connect; reject_unsafe_urls narrows it further.
+ *
+ * @param string $url
+ * @return true|WP_Error true when the URL is safe to fetch, otherwise a WP_Error.
+ */
+function xml_rpc_validator_is_safe_url( $url ) {
+	$url   = trim( (string) $url );
+	$parts = wp_parse_url( $url );
+
+	if ( empty( $parts ) || empty( $parts['scheme'] ) || empty( $parts['host'] ) ) {
+		return new WP_Error( 'unsafe_url', __( 'The URL is not a valid absolute http(s) URL.' ) );
+	}
+
+	$scheme = strtolower( $parts['scheme'] );
+	if ( 'http' !== $scheme && 'https' !== $scheme ) {
+		return new WP_Error( 'unsafe_url', __( 'Only http:// and https:// URLs are allowed.' ) );
+	}
+
+	$host = trim( $parts['host'], '[]' ); // strip IPv6 brackets, if any
+
+	// Resolve the host to every address it points at.
+	$ips = array();
+	if ( filter_var( $host, FILTER_VALIDATE_IP ) ) {
+		$ips[] = $host;
+	} else {
+		$records = @dns_get_record( $host, DNS_A | DNS_AAAA );
+		if ( is_array( $records ) ) {
+			foreach ( $records as $record ) {
+				if ( ! empty( $record['ip'] ) )   { $ips[] = $record['ip']; }
+				if ( ! empty( $record['ipv6'] ) ) { $ips[] = $record['ipv6']; }
+			}
+		}
+		$v4 = @gethostbynamel( $host );
+		if ( is_array( $v4 ) ) {
+			$ips = array_merge( $ips, $v4 );
+		}
+	}
+
+	if ( empty( $ips ) ) {
+		return new WP_Error( 'unsafe_url', __( 'The host could not be resolved.' ) );
+	}
+
+	// Extra IPv4 ranges that filter_var's flags do not cover.
+	$extra_blocked_v4 = array(
+		'100.64.0.0/10', // RFC 6598 carrier-grade NAT
+		'198.18.0.0/15', // RFC 2544 benchmarking
+		'192.0.0.0/24',  // RFC 6890 IETF protocol assignments
+	);
+
+	foreach ( $ips as $ip ) {
+		// Reject private (10/8, 172.16/12, 192.168/16, fc00::/7, fe80::/10)
+		// and reserved (loopback, link-local 169.254/16, 0.0.0.0/8, multicast) ranges.
+		if ( ! filter_var( $ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE ) ) {
+			return new WP_Error( 'unsafe_url', __( 'For security reasons, requests to internal or reserved network addresses are not allowed.' ) );
+		}
+		if ( filter_var( $ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4 ) ) {
+			$ip_long = ip2long( $ip );
+			foreach ( $extra_blocked_v4 as $cidr ) {
+				list( $subnet, $bits ) = explode( '/', $cidr );
+				$mask = -1 << ( 32 - (int) $bits );
+				if ( ( $ip_long & $mask ) === ( ip2long( $subnet ) & $mask ) ) {
+					return new WP_Error( 'unsafe_url', __( 'For security reasons, requests to internal or reserved network addresses are not allowed.' ) );
+				}
+			}
+		}
+	}
+
+	return true;
+}
+
+/**
+ * Resolve a (possibly relative) redirect Location against a base URL.
+ *
+ * Prefers WordPress core's WP_Http::make_absolute_url() when available, but
+ * falls back to a self-contained resolver so relative redirects are handled
+ * even on WordPress installs (3.0-3.3) that predate that helper -- otherwise a
+ * relative Location would stay relative and be rejected by the safe-URL check.
+ *
+ * @param string $maybe_relative The Location header value.
+ * @param string $base_url       The URL the redirect was received from.
+ * @return string An absolute URL (or the input unchanged if it can't be resolved).
+ */
+function xml_rpc_validator_make_absolute_url( $maybe_relative, $base_url ) {
+	$maybe_relative = trim( (string) $maybe_relative );
+
+	if ( method_exists( 'WP_Http', 'make_absolute_url' ) ) {
+		return WP_Http::make_absolute_url( $maybe_relative, $base_url );
+	}
+
+	if ( '' === $maybe_relative ) {
+		return $base_url;
+	}
+	// Already absolute (has a scheme).
+	if ( preg_match( '#^[a-z][a-z0-9+.\-]*://#i', $maybe_relative ) ) {
+		return $maybe_relative;
+	}
+
+	$base = wp_parse_url( $base_url );
+	if ( empty( $base['scheme'] ) || empty( $base['host'] ) ) {
+		return $maybe_relative; // can't resolve; the caller's safe-url check will reject it
+	}
+	$authority = $base['scheme'] . '://' . $base['host'] . ( isset( $base['port'] ) ? ':' . $base['port'] : '' );
+
+	// Scheme-relative: //host/path
+	if ( 0 === strpos( $maybe_relative, '//' ) ) {
+		return $base['scheme'] . ':' . $maybe_relative;
+	}
+	// Root-relative: /path
+	if ( 0 === strpos( $maybe_relative, '/' ) ) {
+		return $authority . $maybe_relative;
+	}
+	// Relative path: resolve against the base path's directory.
+	$base_path = isset( $base['path'] ) ? $base['path'] : '/';
+	$slash     = strrpos( $base_path, '/' );
+	$dir       = ( false === $slash ) ? '/' : substr( $base_path, 0, $slash + 1 );
+	return $authority . $dir . $maybe_relative;
+}
 
 //creates the instances of common classes used later
 $ua_info = new UserAgentInfo();
@@ -49,6 +181,7 @@ class xml_rpc_validator_utils {
 	var $validator_logging = 1;
 	var $logging_on_file = 0;
 	var $logging_buffer = '';
+	var $sensitive_strings = array(); //values (passwords) to scrub from every log entry
 	var $xml_rpc_validator_errors = null;
 	var $default_error_message =  'We encourage you to visit the support page for troubleshooting help. '.
 								  '<a href="https://apps.wordpress.com/support/">Link to Mobile Apps Support Page.</a>';
@@ -127,6 +260,35 @@ class xml_rpc_validator_utils {
 	}
 	
 	/**
+	 * Register a value (e.g. a password) that must never appear in the log.
+	 * Every subsequent log entry has this value scrubbed out.
+	 *
+	 * @param string $value
+	 */
+	function add_sensitive( $value ) {
+		// Require a minimum length so a 1-2 char secret can't blank out unrelated log text.
+		if ( is_string( $value ) && strlen( $value ) >= 3 && ! in_array( $value, $this->sensitive_strings, true ) ) {
+			$this->sensitive_strings[] = $value;
+		}
+	}
+
+	/**
+	 * Replace any registered sensitive value (and its HTML/XML-escaped form)
+	 * with a redaction marker, so credentials never leak into the log buffer,
+	 * the on-screen log, or validator.log.
+	 *
+	 * @param string $msg
+	 * @return string
+	 */
+	function redact( $msg ) {
+		foreach ( $this->sensitive_strings as $secret ) {
+			$needles = array_unique( array( $secret, htmlspecialchars( $secret, ENT_QUOTES ), base64_encode( $secret ) ) );
+			$msg     = str_replace( $needles, '[REDACTED]', $msg );
+		}
+		return $msg;
+	}
+
+	/**
 	 * xml_rpc_validator_logIO() - Writes logging info to file/screen.
 	 *
 	 * @uses $xmlrpc_logging
@@ -139,9 +301,10 @@ class xml_rpc_validator_utils {
 	 */
 	function logIO($io,$msg) {
 		if ($this->validator_logging) {
+			$msg  = $this->redact($msg);
 			$date = gmdate("Y-m-d H:i:s ");
 			$iot = ($io == "I") ? " Input: " : " Output: ";
-			
+
 			$this->logging_buffer.= '<tr><td>'.$date.'</td><td>'.esc_html($msg).'</td></tr>';
 			
 			if ($this->logging_on_file) {
@@ -155,6 +318,7 @@ class xml_rpc_validator_utils {
 
 	function logXML($io,$msg) {
 		if ($this->validator_logging) {
+			$msg  = $this->redact($msg);
 			$date = gmdate("Y-m-d H:i:s ");
 			$iot = ($io == "I") ? " Input: " : " Output: ";
 
@@ -217,47 +381,67 @@ class xml_rpc_validator_utils {
 	
 		if ( $wp_error->get_error_code() ) {
 			$errors_html = '';
+			// Message column may contain our own intentional links; allow only minimal
+			// markup so that any un-escaped remote string can never inject active content.
+			$allowed_msg_html = array(
+				'a'      => array( 'href' => array(), 'title' => array(), 'target' => array(), 'rel' => array() ),
+				'br'     => array(),
+				'em'     => array(),
+				'strong' => array(),
+				'b'      => array(),
+			);
 			foreach ( $wp_error->get_error_codes() as $code ) {
 				$errors_html .= '<tr>';
-				$errors_html .= '<td>'.$code.'</td>';
-				
+				// $code can be a remote XML-RPC fault code / HTTP status, so escape it.
+				$errors_html .= '<td>'.esc_html($code).'</td>';
+
 				$errors_html .= '<td>';
+				// Messages are either our own trusted strings (which intentionally
+				// contain <a> links) or remote strings already escaped at the point
+				// the WP_Error was created (see wp_xmlrpc_client::open / downloadContent).
 				foreach ( $wp_error->get_error_messages($code) as $error_msgs ) {
-					$errors_html .= $error_msgs.'<br/>';
+					$errors_html .= wp_kses( $error_msgs, $allowed_msg_html ).'<br/>';
 				}
 				$errors_html .= '</td>';
-				
+
+				// $error_data can carry remote-controlled content (e.g. the missing
+				// method list built from the server's system.listMethods response).
 				$error_data = $wp_error->get_error_data($code);
 				if ( !empty($error_data) )
-					$errors_html .= '<td>'.$error_data.'</td>';
+					$errors_html .= '<td>'.esc_html($error_data).'</td>';
 				else
-					$errors_html .= '<td></td>';	
+					$errors_html .= '<td></td>';
 					
 				//print the workaround
 				$errors_html .= '<td>';
 				$workorund_html = null;
+				$workaround_found = false; // distinguishes "matched with an empty workaround" from "no match"
 				$is_validator_error = false;
 				//read the workaround for this error
 				foreach ( $this->xml_rpc_validator_errors as $error_obj ) {
 					if( $error_obj['code'] == $code ){
 						//print the workaround on screen
 						$workorund_html = $error_obj['workaround'];
+						$workaround_found = true;
 						$is_validator_error = true;
 						break;
 					}
 				}
-					
+
 				if ( ! $is_validator_error ) {
 					foreach ( $this->xml_rpc_server_errors as $server_code => $server_workaround ) {
 						if( $server_code == $code ) {
 							$workorund_html =  $server_workaround;
+							$workaround_found = true;
 						}
 					}
 				}
-				
-				if ( isset($workorund_html) )
+
+				// Only fall back to the default help text when no workaround matched at all;
+				// a matched-but-empty workaround (e.g. the self-contained "new version" notice) stays empty.
+				if ( $workaround_found )
 					$errors_html .= $workorund_html;
-				else 
+				else
 					$errors_html .=	$this->default_error_message;
 				
 				$errors_html .= '</td>';
@@ -275,29 +459,6 @@ class xml_rpc_validator_utils {
 		 
 	function show_log_on_video( ) {
 		$content = '<table><tr><th>Date</th><th>Message</th></tr>'.$this->logging_buffer.'</table>';
-
-/*		$content .= 'array POST: <br/>';
-		while (list($chiave, $valore) = each($_POST)) {
-			$content .= "$chiave => $valore";
-			$content .= '<br/>';
-		}
-		$content .= '<br/>';
-		$content .= 'array GET: <br/>';
-		while (list($chiave, $valore) = each($_GET)) {
-			$content .= "$chiave => $valore";
-			$content .= '<br/>';
-		}
-		$content .= '<br/>';
-
-		if(isset($_SESSION)) {
-			$content .= 'array SESSION:</br>';
-			while (list($chiave, $valore) = each($_SESSION)) {
-				$content .= "$chiave => $valore";
-				$content .= '<br/>';
-			}
-			$content .= '<br/>';
-		}
-*/
 		return $content;
 	}
 }
@@ -348,17 +509,23 @@ class Blog_Validator {
 	}
 
 	function setWPCredential ($user, $pass) {
+		global $xml_rpc_validator_utils;
 		$this->user_login= $user;
 		$this->user_pass = $pass;
+		// The WP password is serialized into the XML-RPC request body that gets logged; scrub it.
+		$xml_rpc_validator_utils->add_sensitive($pass);
 	}
 
 	function setHTTPCredential ($user, $pass) {
+		global $xml_rpc_validator_utils;
 		$this->HTTP_auth_user_login = $user;
 		$this->HTTP_auth_user_pass = $pass;
+		$xml_rpc_validator_utils->add_sensitive($pass);
 	}
 
 	function setUserAgent ( $ua ) {
-		$this->user_agent= $ua;
+		// Strip control chars (incl. CR/LF) so a crafted UA cannot inject extra HTTP headers.
+		$this->user_agent = preg_replace( '/[\x00-\x1F\x7F]/', '', (string) $ua );
 	}
 	
 	function getUsersBlogs() { 
@@ -482,7 +649,7 @@ class Blog_Validator {
 	 */
 	private function find_rsd_document_url() {
 		global $xml_rpc_validator_errors;
-		$rsdURL;
+		$rsdURL = null;
 		xml_rpc_validator_logIO("O", "The validator is downloading the HTML page from " .$this->site_URL);
 		xml_rpc_validator_logIO("O", "NOTE: WordPress sites normally include an RSD (Really Simple Discovery) link in their HTML <head> section, even if XML-RPC is later blocked by security plugins.");
 		//download the HTML code
@@ -521,7 +688,7 @@ class Blog_Validator {
 		global $xml_rpc_validator_errors;
 		xml_rpc_validator_logIO("O", "Attempting to download RSD document from: ".$rsdURL);
 		xml_rpc_validator_logIO("O", "The RSD document should contain the actual XML-RPC endpoint URL.");
-		$xmlrpcURL;
+		$xmlrpcURL = null;
 		$headers = array( 'Accept' => 'text/xml');
 		$response = $this->downloadContent($rsdURL, $headers);
 		if( is_wp_error( $response ) ) {
@@ -572,41 +739,64 @@ class Blog_Validator {
 		return $xmlrpcURL;
 	}
 
-	//ensures we are not dl big file
-	private function check_download_size( $url, $args = array() ) {
-		
-		xml_rpc_validator_logIO("I", "HTTP HEAD Request: ". print_r ($args, TRUE));
-		$response = wp_remote_head ( $url, $args );
-		if( is_wp_error( $response ) ) {
-			return $response;
-		} else {
-			xml_rpc_validator_logIO("O", "HTTP Response Header: " .print_r ($response['headers'], TRUE));
-			xml_rpc_validator_logIO("O", "HTTP Response Code: " .print_r ($response['response'], TRUE));
-			return true;
-		} 
-	}
-	
 	private function downloadContent($URL, $args = array()) {
-		global $xml_rpc_validator_errors;
+		global $xml_rpc_validator_errors, $xml_rpc_validator_utils;
+
+		// SSRF guard: refuse to fetch internal/reserved network addresses.
+		$safe = xml_rpc_validator_is_safe_url( $URL );
+		if ( is_wp_error( $safe ) ) {
+			xml_rpc_validator_logIO("O", "Refusing to fetch a disallowed URL: ".$URL);
+			return $safe;
+		}
+
 		xml_rpc_validator_logIO("I", 'Doing a simple HTTP GET request on the following URL '.$URL);
 
 		$headers = array();
 		$headers['User-Agent']	= $this->user_agent;
 		if(! empty($this->HTTP_auth_user_login)) {
-			xml_rpc_validator_logIO("I", "HTTP auth header set ".$this->HTTP_auth_user_login.':'.$this->HTTP_auth_user_pass);
-			$headers['Authorization'] = 'Basic '.base64_encode($this->HTTP_auth_user_login.':'.$this->HTTP_auth_user_pass);
+			$basic = base64_encode($this->HTTP_auth_user_login.':'.$this->HTTP_auth_user_pass);
+			$xml_rpc_validator_utils->add_sensitive($this->HTTP_auth_user_pass);
+			$xml_rpc_validator_utils->add_sensitive($basic); // scrub the encoded blob from any request-array dump
+			xml_rpc_validator_logIO("I", "HTTP Basic auth enabled for user '".$this->HTTP_auth_user_login."' (password hidden)");
+			$headers['Authorization'] = 'Basic '.$basic;
 		}
 
 		$r = wp_parse_args($headers, $args);
 
-		/* checking the document size b4 downloading it */
-		//$this->check_download_size ( $URL, $r );
-		
 		xml_rpc_validator_logIO("I", "HTTP Request: ". print_r ($r, TRUE));
 
 		$request = new WP_Http;
-		$requestParameter = array('headers' => $r, 'timeout' => REQUEST_HTTP_TIMEOUT);
-		$response = $request->request( $URL, $requestParameter );
+		$requestParameter = array(
+			'headers'             => $r,
+			'timeout'             => REQUEST_HTTP_TIMEOUT,
+			'redirection'         => 0, // follow redirects manually so every hop is re-validated (WP's own redirect guard does NOT block 169.254.0.0/16)
+			'reject_unsafe_urls'  => true,
+			'limit_response_size' => REQUEST_MAX_RESPONSE_BYTES,
+		);
+
+		$current_url = $URL;
+		$max_hops    = 3;
+		for ( $hop = 0; ; $hop++ ) {
+			$response = $request->request( $current_url, $requestParameter );
+			if ( is_wp_error( $response ) ) {
+				return $response;
+			}
+			$code     = isset( $response['response']['code'] ) ? (int) $response['response']['code'] : 0;
+			$location = isset( $response['headers']['location'] ) ? $response['headers']['location'] : '';
+			if ( $code >= 300 && $code < 400 && '' !== $location && $hop < $max_hops ) {
+				// Resolve a possibly-relative Location against the current URL, then re-check it.
+				$location = xml_rpc_validator_make_absolute_url( $location, $current_url );
+				$safe = xml_rpc_validator_is_safe_url( $location );
+				if ( is_wp_error( $safe ) ) {
+					xml_rpc_validator_logIO("O", "Refusing to follow a redirect to a disallowed URL: ".$location);
+					return $safe;
+				}
+				xml_rpc_validator_logIO("O", "Following redirect (".$code.") to ".$location);
+				$current_url = $location;
+				continue;
+			}
+			break;
+		}
 			
 		/*
 		xml_rpc_validator_logIO("O", "Start logging of the HTTP Response");
@@ -631,9 +821,10 @@ class Blog_Validator {
 		if ( isset($response['headers']['refresh']) || isset($response['headers']['location']) ) {
 			xml_rpc_validator_logIO("O", "WARNING: Server returned redirect headers - content may not be authentic");
 		}
-		
+
 		if ( strcmp( $response['response']['code'], '200' ) != 0 ) {
-			return  new WP_Error($response['response']['code'], $response['response']['message']);
+			// The HTTP reason phrase comes from the remote server: escape it before it becomes an error message.
+			return  new WP_Error($response['response']['code'], esc_html($response['response']['message']));
 		} else {
 			return $response;
 		}
@@ -770,7 +961,15 @@ class wp_xmlrpc_client  {
 	}
 
 	function open() {
-		global $xml_rpc_validator_errors;
+		global $xml_rpc_validator_errors, $xml_rpc_validator_utils;
+
+		// SSRF guard: refuse to POST to internal/reserved network addresses.
+		$safe = xml_rpc_validator_is_safe_url( $this->URL );
+		if ( is_wp_error( $safe ) ) {
+			xml_rpc_validator_logIO("O", "Refusing to contact a disallowed XML-RPC endpoint: ".$this->URL);
+			$this->error = $safe;
+			return $this->error;
+		}
 
 		$args = func_get_args();
 		$method = array_shift($args);
@@ -784,14 +983,20 @@ class wp_xmlrpc_client  {
 		$this->headers['Accept'] = '*/*';
 
 		if(! empty($this->HTTP_auth_user_login)) {
-			xml_rpc_validator_logIO("I", "HTTP auth header set ".$this->HTTP_auth_user_login.':'.$this->HTTP_auth_user_pass);
-			$this->headers['Authorization'] = 'Basic '.base64_encode($this->HTTP_auth_user_login.':'.$this->HTTP_auth_user_pass) ;
+			$basic = base64_encode($this->HTTP_auth_user_login.':'.$this->HTTP_auth_user_pass);
+			$xml_rpc_validator_utils->add_sensitive($this->HTTP_auth_user_pass);
+			$xml_rpc_validator_utils->add_sensitive($basic); // scrub the encoded blob from any header dump
+			xml_rpc_validator_logIO("I", "HTTP Basic auth enabled for user '".$this->HTTP_auth_user_login."' (password hidden)");
+			$this->headers['Authorization'] = 'Basic '.$basic;
 		}
 
 		$requestParameter = array('headers' => $this->headers);
 		$requestParameter['method'] = 'POST';
 		$requestParameter['body'] = $xml;
 		$requestParameter['timeout'] = REQUEST_HTTP_TIMEOUT;
+		$requestParameter['redirection'] = 0; // an xmlrpc.php POST should never be redirected
+		$requestParameter['reject_unsafe_urls'] = true;
+		$requestParameter['limit_response_size'] = REQUEST_MAX_RESPONSE_BYTES;
 
 		xml_rpc_validator_logIO("I", "HTTP Request headers: ". print_r ( $this->headers, TRUE));
 
@@ -817,14 +1022,16 @@ class wp_xmlrpc_client  {
 
 		// Check if response code is 200
 		if ( strcmp($this->response['response']['code'], '200') != 0 ) {
-			return new WP_Error($this->response['response']['code'], $this->response['response']['message']);
+			// Remote HTTP reason phrase -- escape before surfacing it as an error message.
+			return new WP_Error($this->response['response']['code'], esc_html($this->response['response']['message']));
 		}
-		
+
 		// Validate Content-Type for XML-RPC responses
 		$content_type = isset($this->response['headers']['content-type']) ? $this->response['headers']['content-type'] : '';
 		if ( stripos($content_type, 'text/xml') === false && stripos($content_type, 'application/xml') === false ) {
 			xml_rpc_validator_logIO("O", "WARNING: Expected XML content but received Content-Type: " . $content_type);
-			return new WP_Error('invalid_content_type', 'Server did not return XML content. Received: ' . $content_type . '. The XML-RPC endpoint may be blocked or redirected.');
+			// $content_type is a remote header value; escape it before it reaches the error table.
+			return new WP_Error('invalid_content_type', 'Server did not return XML content. Received: ' . esc_html($content_type) . '. The XML-RPC endpoint may be blocked or redirected.');
 		}
 		
 		// Check for redirect headers even with 200 status
@@ -838,7 +1045,7 @@ class wp_xmlrpc_client  {
 		xml_rpc_validator_logXML("O", $contents);
 
 		if(empty($contents)){
-			$error_obj = $xml_rpc_validator_errors['MISSING_XMLRPC_METHODS'];
+			$error_obj = $xml_rpc_validator_errors['XMLRPC_RESPONSE_EMPTY'];
 			$this->error = new WP_Error( $error_obj['code'], $error_obj['message'] );
 			return $this->error;
 		} else {
@@ -867,7 +1074,9 @@ class wp_xmlrpc_client  {
 		}
 		// Is the message a fault?
 		if ($this->message->messageType == 'fault') {
-			$this->error = new WP_Error($this->message->faultCode, $this->message->faultString);
+			// faultString is fully controlled by the remote endpoint: escape it so it
+			// cannot inject markup when printErrors() renders the error table.
+			$this->error = new WP_Error($this->message->faultCode, esc_html($this->message->faultString));
 			return $this->error;
 		}
 		return $this->message->params[0];
@@ -885,7 +1094,8 @@ class wp_xmlrpc_client  {
     }
 	private function check_UTF8($textToCheck) {
 	//reject overly long 2 byte sequences, as well as characters above U+10000
-	$some_string = preg_match('/[\x00-\x08\x10\x0B\x0C\x0E-\x19\x7F]'.
+	//C0 control chars invalid in XML 1.0: \x00-\x08, \x0B, \x0C, \x0E-\x1F, \x7F (was \x0E-\x19, missing 0x1A-0x1F)
+	$some_string = preg_match('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]'.
  	'|[\x00-\x7F][\x80-\xBF]+'.
  	'|([\xC0\xC1]|[\xF0-\xFF])[\x80-\xBF]*'.
  	'|[\xC2-\xDF]((?![\x80-\xBF])|[\x80-\xBF]{2,})'.
