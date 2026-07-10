@@ -106,8 +106,8 @@ var xml_rpc_validator = {
 			jq('.cross').removeClass('cross').addClass('wait');
 			jq('.xml_rpc_error').hide().text('');
 			
-			//clean the log div
-			jq('#xmlrpc_validator_log').text('');
+			//reset the log as a real table so the appended <tr> rows render correctly
+			jq('#xmlrpc_validator_log').html('<table><thead><tr><th>Date</th><th>Message</th></tr></thead><tbody></tbody></table>');
 			 
 			if ( typeof xml_rpc_validator.request == 'object' )
 				xml_rpc_validator.request.abort();
@@ -146,7 +146,6 @@ var xml_rpc_validator = {
 				    },
 				    success: function(msg) {
 				    	var call_obj = arrayAssoc[xml_rpc_validator.current_call_index];
-				    	var oldLog = jq('#xmlrpc_validator_log').html();
 				    	var currentLogMsg = '';
 				    	var obj;
 
@@ -165,7 +164,8 @@ var xml_rpc_validator = {
 							currentLogMsg = obj[2] || '';
 				        }
 
-				    	jq('#xmlrpc_validator_log').html( oldLog + currentLogMsg ); //writes the full log
+				    	// append the server log rows into the table body (valid HTML, renders correctly)
+				    	jq('#xmlrpc_validator_log tbody').append( currentLogMsg );
 				        xml_rpc_validator.current_call_index++;
 				        xml_rpc_validator.make_ajax_call( );
 				    },

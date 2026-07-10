@@ -333,6 +333,15 @@ class xml_rpc_validator_utils {
 	
 		if ( $wp_error->get_error_code() ) {
 			$errors_html = '';
+			// Message column may contain our own intentional links; allow only minimal
+			// markup so that any un-escaped remote string can never inject active content.
+			$allowed_msg_html = array(
+				'a'      => array( 'href' => array(), 'title' => array(), 'target' => array(), 'rel' => array() ),
+				'br'     => array(),
+				'em'     => array(),
+				'strong' => array(),
+				'b'      => array(),
+			);
 			foreach ( $wp_error->get_error_codes() as $code ) {
 				$errors_html .= '<tr>';
 				// $code can be a remote XML-RPC fault code / HTTP status, so escape it.
@@ -343,7 +352,7 @@ class xml_rpc_validator_utils {
 				// contain <a> links) or remote strings already escaped at the point
 				// the WP_Error was created (see wp_xmlrpc_client::open / downloadContent).
 				foreach ( $wp_error->get_error_messages($code) as $error_msgs ) {
-					$errors_html .= $error_msgs.'<br/>';
+					$errors_html .= wp_kses( $error_msgs, $allowed_msg_html ).'<br/>';
 				}
 				$errors_html .= '</td>';
 
@@ -467,7 +476,8 @@ class Blog_Validator {
 	}
 
 	function setUserAgent ( $ua ) {
-		$this->user_agent= $ua;
+		// Strip control chars (incl. CR/LF) so a crafted UA cannot inject extra HTTP headers.
+		$this->user_agent = preg_replace( '/[\x00-\x1F\x7F]/', '', (string) $ua );
 	}
 	
 	function getUsersBlogs() { 
